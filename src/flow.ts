@@ -45,6 +45,9 @@ async function dismissOverlays(page: Page): Promise<void> {
   await page.keyboard.press("Escape");
   const closePanel = page.getByRole("button", { name: "Close account panel" });
   if (await closePanel.isVisible().catch(() => false)) await closePanel.click({ timeout: 5000 }).catch(() => {});
+  // A brand-new project shows a one-off onboarding note ("Got it") over the bottom of the page.
+  const onboarding = page.getByRole("button", { name: "Got it, dismiss onboarding message" });
+  if (await onboarding.isVisible().catch(() => false)) await onboarding.click({ timeout: 5000 }).catch(() => {});
 }
 
 // The balance only shows inside the account panel. That panel also holds "Sign out": never touch anything else in it.
@@ -229,6 +232,13 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
     const errors = progress.length ? 0 : await newErrorTiles(page, before);
     if (!errors) continue;
     failures += errors;
+    // The tile says WHY Flow refused, and the reason changes the right response. "Unusual activity" is a soft block:
+    // retrying inside it burned ten attempts in a row on 2026-10-12. Fail at once with the real words instead.
+    const reason = await errorTileReason(page);
+    if (reason && /unusual activity/i.test(reason)) {
+      if (fresh.length) return fresh;
+      throw new Error(`Flow refused this generation with "${reason}". Nothing was charged. This is a soft block, not a prompt problem: stop generating for a while (tens of minutes) and try again later.`);
+    }
     if (retriesLeft > 0) {
       retriesLeft--;
       if (job) job.progress = "Flow failed, retrying";
@@ -236,9 +246,21 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
       if (retried) continue;
     }
     if (fresh.length) return fresh;
-    throw new Error(`Flow failed this generation ${failures} time(s) ("Sorry, this image/video failed to generate"). Nothing was charged. Try again later or reword the prompt.`);
+    throw new Error(`Flow failed this generation ${failures} time(s)${reason ? `: "${reason}"` : ""}. Nothing was charged. Try again later or reword the prompt.`);
   }
   throw new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s waiting for Flow to finish.`);
+}
+
+// The most useful line from the newest error tile: Flow's "unusual activity" note when present, else its own
+// "Sorry, this ... failed" line. The generic wording alone once hid a soft block for a whole session.
+async function errorTileReason(page: Page): Promise<string | undefined> {
+  const text = await page
+    .locator("flow-grid-tile-container:has(flow-error-tile)")
+    .first()
+    .innerText()
+    .catch(() => "");
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => /unusual activity/i.test(l)) ?? lines.find((l) => /sorry|failed|couldn.t|unable/i.test(l) && !/^failed$/i.test(l));
 }
 
 async function openSettings(page: Page): Promise<void> {
@@ -301,16 +323,32 @@ async function applySettings(page: Page, job: Job): Promise<number> {
 
 const ASSET_PREFIX = "asset:";
 
+// Uploading your own file can raise a one-off rights confirmation ("Rights to use this image" / "I agree"), and the
+// upload does not start until it is accepted - it stalled a character build until the dialog was answered by hand.
+// It only appears sometimes, so this is a quick glance, never a wait.
+async function acceptUploadRights(page: Page): Promise<boolean> {
+  const agree = page.getByRole("dialog").getByRole("button", { name: "I agree", exact: true });
+  if (!(await agree.isVisible().catch(() => false))) return false;
+  await agree.click({ timeout: 8000 }).catch(() => {});
+  await pause(page, 1000);
+  return true;
+}
+
 // Waits for THIS upload by its own name until Flow has finished processing it (its picture carries a media id), so
-// a half-processed upload can never be taken for the next generation's result.
+// a half-processed upload can never be taken for the next generation's result. The rights dialog can appear anywhere
+// between choosing the file and the upload starting, so it is answered here on every pass.
 async function waitForUpload(page: Page, name: string, timeoutMs: number): Promise<void> {
   const tile = page.locator(`flow-grid-tile-container[aria-label="${name.replace(/"/g, '\\"')}"]:has([data-media-id])`);
-  await tile
-    .first()
-    .waitFor({ state: "attached", timeout: timeoutMs })
-    .catch(() => {
-      throw new Error(`Flow did not finish processing the upload "${name}" within ${Math.round(timeoutMs / 1000)}s.`);
-    });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await tile.first().count()) break;
+    await acceptUploadRights(page);
+    if (await tile.first().count()) break;
+    await pause(page, 2000);
+  }
+  if (!(await tile.first().count())) {
+    throw new Error(`Flow did not finish processing the upload "${name}" within ${Math.round(timeoutMs / 1000)}s.`);
+  }
   await pause(page, 1000);
 }
 
@@ -612,6 +650,9 @@ async function ensureProjectGrid(page: Page): Promise<void> {
     await page.goto(root, { waitUntil: "domcontentloaded" });
     await pause(page, 2500);
   }
+  // A fresh project opens with the agent's session panel over the composer, and while it is up there is no
+  // "Agent" toggle anywhere - every composer-driven job has to close it first.
+  await closeAgentSessionPanel(page);
   await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
   await pause(page, 800);
   await scrollToTop(page);
@@ -1012,7 +1053,14 @@ export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ 
     await page.getByRole("button", { name: "Upload", exact: true }).click();
     await (await chooser).setFiles(image);
   }
-  await page.waitForURL(/\/character\/[0-9a-f-]{36}/, { timeout: 90_000 });
+  // The editor URL can take a while after an upload, and a rights confirmation can pop up in between; answer it while
+  // waiting instead of letting waitForURL time out underneath the dialog.
+  const editorUrl = /\/character\/[0-9a-f-]{36}/;
+  for (const deadline = Date.now() + 90_000; !editorUrl.test(page.url()); ) {
+    if (Date.now() > deadline) throw new Error("Flow did not open the character editor within 90s after the upload.");
+    await acceptUploadRights(page);
+    await pause(page, 1500);
+  }
   const url = page.url();
 
   const name = page.getByRole("textbox", { name: "Character name" });
@@ -1142,13 +1190,24 @@ async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAs
   await pause(page, 1200);
 }
 
+// The agent session panel hides the plain composer whenever it is up: "Reuse prompt" raises it, and a brand-new
+// project can open with it already showing ("Untitled session"). Closing it brings the composer back. Close is
+// scoped to the panel wrapper when possible - dialogs of their own have their own Close buttons.
+async function closeAgentSessionPanel(page: Page): Promise<void> {
+  const panel = page.getByRole("button", { name: "Start new session" });
+  if (!(await panel.isVisible().catch(() => false))) return;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const scoped = page.locator(".agent-panel-wrapper").getByRole("button", { name: "Close", exact: true }).first();
+    const close = (await scoped.isVisible().catch(() => false)) ? scoped : page.getByRole("button", { name: "Close", exact: true }).first();
+    await close.click({ timeout: 8000 }).catch(() => {});
+    await pause(page, 1200);
+    if (!(await panel.isVisible().catch(() => false))) return;
+  }
+}
+
 // "Reuse prompt" on an agent-made tile opens the agent's session panel, which hides the normal composer.
 async function closeAgentSession(page: Page): Promise<void> {
-  const panel = page.getByRole("button", { name: "Start new session" });
-  if (await panel.isVisible().catch(() => false)) {
-    await page.getByRole("button", { name: "Close", exact: true }).click();
-    await pause(page, 1000);
-  }
+  await closeAgentSessionPanel(page);
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
   else {
