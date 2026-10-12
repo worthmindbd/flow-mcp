@@ -22,14 +22,15 @@ credits, so a free account makes a few clips a day. A paid Google AI plan adds m
 | **Antigravity** (Google) | Free, with a weekly limit | Yes: follow **Setup A** |
 | **Codex** (OpenAI) | A free ChatGPT account gets a small allowance; more with ChatGPT Plus | Yes: follow **Setup A** |
 | **Claude Code** (or the **Code** tab in the Claude app) | Needs a paid Claude plan (Pro or higher) | Yes: follow **Setup A** |
+| **OpenCode** (open source) | Free app; you connect it to a model account of your choice | Yes: follow **Setup A** |
 | **The Claude app's Chat tab** | Free | No: follow **Setup B**, then connect it |
 | **No assistant, just Flow Studio** | Free | No: follow **Setup B** |
 
 Prices and limits change; check each company's own page.
 
-**Your computer:** a Mac, or a Windows 10/11 PC. It can't run in a cloud workspace or on a phone, because
-it controls a Chrome window on the computer it's installed on. Keep the computer awake while it's making
-something.
+**Your computer:** a Mac, a Windows 10/11 PC, or a Linux machine (verified on Linux Mint in October 2026). It can't
+run in a cloud workspace or on a phone, because it controls a Chrome window on the computer it's installed on. Keep
+the computer awake while it's making something.
 
 ---
 
@@ -98,6 +99,14 @@ winget install Google.Chrome
 
 Then close and reopen PowerShell.
 
+**Linux.** Install Google Chrome from [google.com/chrome](https://www.google.com/chrome), then:
+
+```bash
+sudo apt install ffmpeg git
+```
+
+Node.js 22 or newer: from [nodejs.org](https://nodejs.org), or your distribution's packages if they are new enough (`node --version` to check).
+
 ### B2. Get Flow MCP
 
 ```bash
@@ -152,8 +161,8 @@ Skip this if you'll only use Flow Studio.
    Quit) and open it again. Just closing the window isn't enough.
 4. Ask: *"Check my Flow session."*
 
-To connect Claude Code, Codex or Antigravity by hand instead, see the
-[README](README.md#connect-it-to-claude-codex-or-antigravity).
+To connect Claude Code, Codex, Antigravity or OpenCode by hand instead, see the
+[README](README.md#connect-it-to-claude-codex-opencode-or-antigravity).
 
 ---
 
@@ -164,7 +173,7 @@ Nothing needs to run all the time.
 | | Starts | Stops |
 |---|---|---|
 | **The Flow tools in your assistant** | By themselves, when the assistant app opens | When you quit the app |
-| **Flow Studio, the control panel** | While your assistant is open: go to **http://127.0.0.1:8787** in your browser. Without one: double-click **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows) in the `flow-mcp` folder, and it opens the panel for you | When you quit the assistant, or close the Flow Studio window you started |
+| **Flow Studio, the control panel** | While your assistant is open: go to **http://127.0.0.1:8787** in your browser. Without one: double-click **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows) in the `flow-mcp` folder - on Linux, run `npm run studio` - and it opens the panel for you | When you quit the assistant, or close the Flow Studio window you started |
 | **The Flow Chrome window** | `npm run login`, or by itself when the tool needs Flow | Close it any time; keep it open while something is being made |
 
 So Flow Studio is only running while your assistant is open, or while its own window is. If the panel says
@@ -188,7 +197,7 @@ asks before spending.
 Everything you make is saved in the **flow-mcp-out** folder in your home folder.
 
 **No assistant?** Open Flow Studio and work through its tabs from left to right: Cast, Frames, Shots,
-Voice, Restyle, Cut.
+Voice, Restyle, Cut, Library.
 
 ---
 
@@ -204,6 +213,7 @@ Voice, Restyle, Cut.
 | *"Not signed in"* or *"no project open"* | Run `npm run login`, sign in, open a project, leave the window open |
 | Out of credits | Free credits refill daily, starting with your next generation. Stills are always free |
 | A video was made but no file arrived | It's still in Flow. Ask to download it again; that's free. Never make it again and pay twice |
+| A clip fails to generate | You aren't charged. If the tile mentions *unusual activity*, that's a temporary block on Flow's side: pause for a while (tens of minutes), don't just retry in a loop. Otherwise a plain failure is safe to retry |
 | Everything times out | The Flow Chrome window was closed or the computer slept. Run `npm run login` again |
 
 ---

@@ -136,9 +136,9 @@ export const shapes = {
       .optional()
       .describe("Skip the guard that refuses to run when Flow already holds a fresh-looking continuation of this clip. Only pass it when you have checked the grid and genuinely want another paid take."),
   },
-  trash: { name: z.string().min(1).describe("Exact title of the item to move to Flow's Trash, as listed by flow_assets.") },
+  trash: { name: z.string().min(1).describe("Exact title of the item to move to Flow's Bin (the trash view), as listed by flow_assets.") },
   set_key: { key: z.string().min(1).max(200) },
-  discard: { path: z.string().min(1).describe("A saved film, still, narration or whole project folder inside the films folder, to move to this computer's bin (Mac Trash, Windows Recycle Bin).") },
+  discard: { path: z.string().min(1).describe("A saved film, still, narration or whole project folder inside the films folder, to move to this computer's bin (Mac Trash, Windows Recycle Bin, Linux Trash).") },
   outputs: {},
   characters: {},
   character_edit: {

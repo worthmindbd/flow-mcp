@@ -332,8 +332,8 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
         <p class="lede">Everything already in the open Flow project. Download anything without regenerating it — the 1080p and 2K upscales are free.</p>
         <div class="card">
           <label class="f">Save into project folder</label><input type="text" id="l_project" placeholder="MyFilm">
-          <div class="rowbtns"><button class="btn small" id="l_load">Load library</button><button class="btn small" id="l_dl" disabled>Download selected</button><button class="btn small ghost" id="l_dlhd" disabled>…in 1080p / 2K</button><button class="btn small ghost" id="l_trash" disabled style="border-color:var(--bad);color:var(--bad)">Move to Flow's Trash</button></div>
-          <p class="empty" style="margin-top:6px">This removes things from your Flow project, not from <span data-place="computer">this Mac</span> — your downloaded files stay put. Flow keeps them in its Trash, where you can restore them.</p>
+          <div class="rowbtns"><button class="btn small" id="l_load">Load library</button><button class="btn small" id="l_dl" disabled>Download selected</button><button class="btn small ghost" id="l_dlhd" disabled>…in 1080p / 2K</button><button class="btn small ghost" id="l_trash" disabled style="border-color:var(--bad);color:var(--bad)">Move to Flow's Bin</button></div>
+          <p class="empty" style="margin-top:6px">This removes things from your Flow project, not from <span data-place="computer">this Mac</span> — your downloaded files stay put. Flow keeps them in its Bin, where you can restore them.</p>
           <div class="lib" id="l_list"></div>
         </div>
       </section>
@@ -774,12 +774,12 @@ $("#l_trash").onclick = async () => {
   if (!guard()) return;
   const names = [...chosen].map((n) => LIB[n].name);
   // Flow trashes instantly with no question of its own, so the panel asks.
-  if (!confirm(`Move ${names.length === 1 ? "this" : `these ${names.length}`} to Flow's Trash?\n\n${names.join("\n")}\n\nYou can restore ${names.length === 1 ? "it" : "them"} from Trash in Flow.`)) return;
+  if (!confirm(`Move ${names.length === 1 ? "this" : `these ${names.length}`} to Flow's Bin?\n\n${names.join("\n")}\n\nYou can restore ${names.length === 1 ? "it" : "them"} from Bin in Flow.`)) return;
   const b = $("#l_trash"); b.disabled = true; b.textContent = "Moving…";
   const failed = [];
   for (const name of names) { try { await api("trash", { name }); } catch (err) { failed.push(`${name}: ${err.message}`); } }
-  b.textContent = "Move to Flow's Trash";
-  toast(failed.length ? `${names.length - failed.length} moved to Trash. Not moved: ${failed.join("; ")}` : `${names.length} moved to Flow's Trash`, Boolean(failed.length));
+  b.textContent = "Move to Flow's Bin";
+  toast(failed.length ? `${names.length - failed.length} moved to Flow's Bin. Not moved: ${failed.join("; ")}` : `${names.length} moved to Flow's Bin`, Boolean(failed.length));
   LIB = []; chosen.clear(); $("#l_load").click();
 };
 

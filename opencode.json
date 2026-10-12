@@ -5,7 +5,7 @@
       "type": "local",
       "command": ["node", "/home/worthmind/Coding/flow-mcp/dist/index.js"],
       "enabled": true,
-      "timeout": 75000
+      "timeout": 80000
     }
   }
 }

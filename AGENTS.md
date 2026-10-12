@@ -373,3 +373,7 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   project's assets (or read the credit balance) before trusting that accounting; the phantom take was recovered with
   flow_download and serves as an alternate ending. Balance readout is the honest accountant: 1050 -> 990 for 3 scenes
   plus the phantom = 60 credits, not the 45 planned.
+- FLOW RENAMED ITS TRASH VIEW TO "BIN" (2026-10-12): the left nav now reads Bin (verified live); the tile menu still
+  says "Move to trash", which is what flow_trash clicks. User-facing copy now says Flow's Bin everywhere: the three
+  guides, the panel's Library button/confirm/toast, and the flow_trash title/description. The tool NAME stays
+  flow_trash.

@@ -21,11 +21,11 @@ New here? [GETTING-STARTED.md](GETTING-STARTED.md) takes you from nothing to you
 
 | | |
 |---|---|
-| **macOS or Windows 10/11** | Developed and tested on macOS. Windows is supported (Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions), but it hasn't been run on a real PC yet, so please report anything that breaks |
+| **macOS, Windows 10/11 or Linux** | Developed and tested on macOS. The core flows (characters, generations, downloads, the panel, joining films) were verified on Linux in October 2026, though Linux's corners (its Trash, the launcher) are the least tested. Windows is supported (Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions), but it hasn't been run on a real PC yet, so please report anything that breaks |
 | **Node.js 22 or newer** | `node --version` |
 | **Google Chrome** | Any recent version |
 | **A Google account** | Free. Flow gives every account 50 credits a day; a paid Google AI plan adds more and unlocks 1080p downloads. Developed on a Pro plan |
-| **FFmpeg** *(optional)* | Mac: `brew install ffmpeg` · Windows: `winget install Gyan.FFmpeg`. Needed only to join clips, mix music or record narration |
+| **FFmpeg** *(optional)* | Mac: `brew install ffmpeg` · Windows: `winget install Gyan.FFmpeg` · Linux: your package manager (`sudo apt install ffmpeg`). Needed only to join clips, mix music or record narration |
 | **A Google AI Studio key** *(optional, free)* | Only for the Google narration voices. See below |
 
 A display must stay awake: the Chrome window is really being driven, so the machine cannot be
@@ -62,7 +62,7 @@ everyday browser.
 
 ---
 
-## Connect it to Claude, Codex or Antigravity
+## Connect it to Claude, Codex, OpenCode or Antigravity
 
 **Claude Code**
 
@@ -99,6 +99,12 @@ Codex, like most MCP apps, gives up on a tool call after 60 seconds, so any call
 
 ```json
 { "mcpServers": { "flow": { "command": "node", "args": ["/absolute/path/to/flow-mcp/dist/index.js"] } } }
+```
+
+**OpenCode**: add to `opencode.json` in the project folder (or `~/.config/opencode/opencode.json` for every folder). Keep `timeout` above 45 seconds, like the others, so a slow step can hand back its ticket number instead of timing out:
+
+```json
+{ "mcp": { "flow": { "type": "local", "command": ["node", "/absolute/path/to/flow-mcp/dist/index.js"], "enabled": true, "timeout": 75000 } } }
 ```
 
 **Other MCP apps** (Cursor, VS Code and others) take the same command and arguments in their own MCP
@@ -141,7 +147,7 @@ The same features, without an AI assistant in the loop:
 npm run studio     # then open http://127.0.0.1:8787
 ```
 
-or double-click **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows).
+or double-click **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows); on Linux, `npm run studio`.
 
 Seven tabs, in the order you would use them:
 
@@ -157,12 +163,12 @@ Seven tabs, in the order you would use them:
   already made. Add a narration (from your saved ones or an upload) and music, and turn the clips' own
   sound down so the narration sits on top.
 - **Library**: everything in your Flow project. Download it again for free (a scene comes down as one
-  finished film, not loose clips), or move it to Flow's Trash.
+  finished film, not loose clips), or move it to Flow's Bin.
 
 A progress monitor and a gallery of your saved work sit alongside. The gallery shows stills or clips
 on the tabs that use them. On a wide screen, each side scrolls on its own. Two kinds of delete, clearly
-labelled: **Move to the Mac's Trash / Recycle Bin** removes a file from your computer; **Move to
-Flow's Trash** removes it from your Flow project only. Both can be undone.
+labelled: **Move to this computer's Trash / Recycle Bin** removes a file from your computer; **Move to
+Flow's Bin** removes it from your Flow project only, where Flow can restore it. Both can be undone.
 
 The panel ships with the repo but is not started for you: run `npm run studio` when you want it.
 Opening `studio/index.html` as a plain file does nothing; the page needs the server behind it, and
@@ -186,7 +192,7 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | `flow_retry` | Re-queue failed jobs with the same settings and file names (a failed tile is first retried inside Flow with its own free Retry button: `retries`, default 1) |
 | `flow_assets` | List images and videos already in the Flow project (usable as `asset:<title>`) |
 | `flow_download` | Download existing project media without regenerating. Free, including the 1080p / 2K upscale. A scene comes down as one stitched film |
-| `flow_trash` | Move an image, video or scene in the Flow project to Flow's Trash, where it can be restored. Exact title only; refuses if two items share it; never deletes permanently |
+| `flow_trash` | Move an image, video or scene in the Flow project to Flow's Bin, where it can be restored. Exact title only; refuses if two items share it; never deletes permanently |
 | `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (20 images in ~204 s), 0 credits. Each image is matched back to its scene by its stored prompt, so file numbers are right in any finish order. Scenes the agent drops are re-asked of it (up to 2 rounds), then re-run one by one |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). Flow shows no quote first; about 20 credits for a 4 s clip |
 | `flow_continue` | Start a clip from the last frame of an existing one **with a character or your avatar still attached**. The composer allows a start frame or attached characters, never both, so this drives Flow's agent mode, which does both. No quote beforehand |
@@ -208,8 +214,9 @@ Output lands in `~/flow-mcp-out/<project>/scene-NN.ext`.
 
 ### Narration with Google's voices (optional)
 
-`flow_narrate` with `engine: "mac"` uses your computer's own voices and works out of the box: macOS voices on a
-Mac, the built-in speech voices on Windows. For Google's voices (the same ones Flow offers), get a free key from
+`flow_narrate` with `engine: "mac"` uses your computer's own voices and works out of the box on a Mac or a PC:
+macOS voices on a Mac, the built-in speech voices on Windows. (Linux has no computer-voice engine wired in yet -
+use the Google engine there.) For Google's voices (the same ones Flow offers), get a free key from
 [Google AI Studio](https://aistudio.google.com/apikey) and paste it into **Flow Studio → Voice → Google AI Studio
 key → Save key**. It's checked with Google before it's saved, and stored only on your computer. Or set
 `GEMINI_API_KEY`. Either way, never paste the key into a chat; it would end up in the conversation history.
@@ -224,7 +231,10 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
   `max_credits` (default 25).
 - Environment variables: `GEMINI_API_KEY`, `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`,
   `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`, `FLOW_MCP_PAUSE_MIN_S`,
-  `FLOW_MCP_PAUSE_MAX_S`.
+  `FLOW_MCP_PAUSE_MAX_S`. Rarer ones: `FLOW_MCP_PATIENCE_MS` (how long a slow tool call waits before
+  answering with a task id, default 45 s - keep your MCP app's own timeout above it),
+  `FLOW_MCP_FFMPEG` / `FLOW_MCP_FFPROBE` (full paths if they are not on PATH) and `FLOW_MCP_SAY`
+  (the computer-voice command on a Mac).
 
 ## If something goes wrong
 
@@ -232,7 +242,8 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
 |---|---|
 | Mac: the server will not start, `EPERM: operation not permitted` | The folder is in a macOS-protected location. Move it out of `~/Desktop`, `~/Documents` or `~/Downloads` and update the path in your Claude config |
 | *"Not signed in"* or *"no project open"* | Run `npm run login`, sign in, open a Flow project, leave the window open |
-| A clip generated but no file arrived | The media is still in Flow. `flow_download` pulls it back for nothing. Never re-generate and pay twice |
+| A generation fails and the tile says *"unusual activity"* | A soft block on Flow's side, not your prompt. Nothing was charged. Stop generating for a while (tens of minutes) and try again; the tools now refuse to retry through it |
+| A clip generated but no file arrived | The media is still in Flow. `flow_download` pulls it back for nothing. Never re-generate and pay twice - and after any failure, check the project's assets and your balance before trusting what a failed job reported |
 | Everything times out | The Chrome window was closed, or the machine slept. Reopen it with `npm run login` |
 
 ---

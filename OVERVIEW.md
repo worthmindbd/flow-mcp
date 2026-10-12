@@ -1,6 +1,6 @@
 # Flow Studio: what it is and what it does
 
-*A plain-English guide. Written 20 September 2026.*
+*A plain-English guide. Written 20 September 2026; updated 12 October 2026.*
 
 ---
 
@@ -8,7 +8,7 @@
 
 **There is no website, no cloud service, and no account to sign up for.**
 
-Everything here is a small program sitting on your own computer (a Mac or a Windows PC) in the folder
+Everything here is a small program sitting on your own computer (a Mac, a Windows PC or a Linux machine) in the folder
 `~/flow-mcp`. When it runs, it opens a private Chrome window, signs into Google
 Flow as you, and clicks Flow's real buttons, the same ones you'd click
 yourself. Nothing is hosted anywhere else. Nothing leaves your machine except
@@ -52,7 +52,8 @@ logins and tabs stay untouched.
   one has to run on your own computer, because it drives the Chrome window there.
 - **No assistant at all**: the control panel does everything on its own.
 
-Mac is the tested platform. Windows support is new and hasn't been tried on a real PC yet.
+Mac is the tested platform. Linux was verified for the core flows in October 2026; its corners (the Trash, the
+launcher) are the least tested. Windows support follows each system's own APIs and has not been run on a real PC yet.
 
 ---
 
@@ -98,7 +99,7 @@ This is a limit in Flow itself, not something we can program around. The exact j
 |---|---|
 | **Library Browser** | Everything sitting in your Flow project |
 | **Free Re-download** | Pulls any of it back onto your computer at no cost, including the free upgrade to 1080p for video or 2K for stills. A scene comes down as one finished film, not a pile of loose clips |
-| **Move to Flow's Trash** | Clears things out of your Flow project. Flow keeps them in its Trash, where you can restore them. Nothing is ever deleted for good, and nothing on your computer is touched |
+| **Move to Flow's Bin** | Clears things out of your Flow project. Flow keeps them in its Bin (the trash view), where you can restore them. Nothing is ever deleted for good, and nothing on your computer is touched |
 
 ### Sound and final cut
 
@@ -113,24 +114,25 @@ This is a limit in Flow itself, not something we can program around. The exact j
 ## The control panel
 
 A web page served by that same program, reachable only from your own computer.
-Start it by double-clicking **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows) in the project folder.
+Start it by double-clicking **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows) in the project folder,
+or with `npm run studio` on any system.
 
 Seven tabs, in the order you'd use them:
 
 1. **Cast**: make characters and pick who's in the scene
 2. **Frames**: free key stills to lock the look before spending anything
 3. **Shots**: the paid clips, with a credit ceiling you set, and the card that carries on from a clip you already made
-4. **Voice**: record the narration, free. Your saved narrations are listed here, so you can play them back or delete the ones you don't want. This is also where you paste your free Google AI Studio key. It's checked with Google and saved only on your computer, so you never have to put it in a chat
+4. **Voice**: record the narration, free. Either Google AI Studio's text-to-speech (the same voices Flow has, and you can tell it *how* to read the line; keep that note short) or, on a Mac or PC, a voice already on your computer (macOS voices on a Mac, Windows' own voices on a PC). Your saved narrations are listed here, so you can play them back or delete the ones you don't want. This is also where you paste your free Google AI Studio key. It's checked with Google and saved only on your computer, so you never have to put it in a chat
 5. **Restyle**: change a clip you already have
 6. **Cut**: join everything into a finished film. Pick the videos you want, in order (ones you made, or any video you upload), then add a narration and music, and turn the clips' own sound down so the voice sits on top
-7. **Library**: browse what Flow is holding, pull it back for free, or move things to Flow's Trash
+7. **Library**: browse what Flow is holding, pull it back for free, or move things to Flow's Bin
 
 Progress and a gallery of your saved work sit alongside. The gallery shows stills or clips on the tabs where you'd use them, and on a wide screen each side scrolls on its own.
 
 **Two kinds of delete, so you always know what you're removing:**
 
-- **Move to the Mac's Trash** (the **Recycle Bin** on Windows): takes a film, a still or a narration off your computer. Put it back from the Trash if you change your mind.
-- **Move to Flow's Trash**: in the Library tab. Takes it out of your Flow project only; anything you've already downloaded stays on your computer. Restore it from Trash in Flow.
+- **Move to the Mac's Trash** (the **Recycle Bin** on Windows, **Trash** on Linux): takes a film, a still or a narration off your computer. Put it back from the Trash if you change your mind.
+- **Move to Flow's Bin**: in the Library tab. Takes it out of your Flow project only; anything you've already downloaded stays on your computer. Restore it from Bin in Flow.
 
 ---
 
@@ -149,6 +151,7 @@ Every item below was run for real, not assumed:
 - Making a character, and editing one in place
 - Restyling an existing clip
 - The bulk storyboard: 20 stills in 204 seconds, free
+- A 30-second vertical cartoon in which the same character stays identical across three shots (October 2026)
 
 We also hit a **real** Flow failure in the wild: 4 of 20 stills failed while
 Google's servers were busy. Flow offers no retry button at all on those, so the
@@ -166,6 +169,7 @@ only falls back to one-at-a-time as a last resort.
 | **NYC Flight** | A 10-second drone shot that begins exactly where an earlier clip ended |
 | **Welcome to America** | Earth from space down to the Statue of Liberty, a pin drop, and a text reveal |
 | **Desk Take**: 20 seconds, 1080p | You, from your own Flow avatar, talking to camera in two shots. The second one starts on the exact last frame of the first, so it plays as one continuous take. 30 credits |
+| **Biscuit vs. the Robot Vacuum**: 30 seconds, 9:16 | A cartoon cat, one character kept identical across three shots: a nap, a startled leap onto a robot vacuum, and a dust-bunny surf ride under the couch (with a recovered alternate ending). 45 credits, plus 15 for the bonus take that survived a busy-server hiccup |
 
 ---
 
@@ -176,7 +180,7 @@ only falls back to one-at-a-time as a last resort.
 - Animate between two stills you picked yourself
 - Carry on from the real last frame of a finished clip, so two clips play as one shot
 - Chain shots into one unbroken camera move
-- Survive busy-server failures without losing the work that succeeded
+- Survive busy-server failures and Flow's "unusual activity" soft blocks without losing the work that succeeded, or paying for the same thing twice
 - Narrate anything, at any length, for free
 - Cut it all together with music and voice
 - Restyle footage you already paid for
@@ -203,7 +207,7 @@ The same goes for a job that seems to vanish while it is running. What Flow is h
 | The program | `~/flow-mcp` |
 | Finished films and stills | `~/flow-mcp-out/<project name>` |
 | The private Chrome profile | `~/.flow-mcp/chrome-profile` |
-| The control panel | Started by **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows), opens on your computer only |
+| The control panel | Started by **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows), or `npm run studio` on any system; opens on your computer only |
 | Sign in to Flow by hand | `npm run login` in the project folder |
 
 Your Google password is never typed by the program; you sign in yourself, once,
