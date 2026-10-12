@@ -6,6 +6,7 @@ export const PLAYBOOK = {
     "Tell the user the expected credit total before queueing anything that costs credits.",
     "Call flow_wait repeatedly until finished is true; scenes run one at a time with 25-70 s pauses.",
     "No call blocks for more than about 45 s. A reply with still_working and a task_id means Flow is still busy with it: pass the task_id to flow_wait, and never repeat the call.",
+    "If a reply says Flow refused a generation with \"unusual activity\", that is a soft block on the account, not a prompt problem: nothing was charged, every generating tool now refuses until the wait in flow_status.soft_block expires (hours). Keep the volume low - it is the main trigger - rather than rewording prompts or retrying.",
   ],
   models: {
     "Omni 1.1 Flash": "7 credits at 4s, 12 at 8s (720p). Supports duration 4/6/8/10 and 360p/720p. Best default for drafts and frame-to-frame transitions.",

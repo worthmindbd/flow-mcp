@@ -231,7 +231,10 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
   `max_credits` (default 25).
 - Environment variables: `GEMINI_API_KEY`, `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`,
   `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`, `FLOW_MCP_PAUSE_MIN_S`,
-  `FLOW_MCP_PAUSE_MAX_S`. Rarer ones: `FLOW_MCP_PATIENCE_MS` (how long a slow tool call waits before
+  `FLOW_MCP_PAUSE_MAX_S`, `FLOW_MCP_MAX_PER_HOUR` (0 = no cap; 20-30 keeps a long batch from looking
+  like a machine, which is what Flow's soft block reacts to), `FLOW_MCP_SOFT_BLOCK_HOURS` (how long
+  generation stays refused after Flow reports "unusual activity", default 6; 0 disables that wait).
+  Rarer ones: `FLOW_MCP_PATIENCE_MS` (how long a slow tool call waits before
   answering with a task id, default 45 s - keep your MCP app's own timeout above it),
   `FLOW_MCP_FFMPEG` / `FLOW_MCP_FFPROBE` (full paths if they are not on PATH) and `FLOW_MCP_SAY`
   (the computer-voice command on a Mac).
@@ -242,7 +245,7 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
 |---|---|
 | Mac: the server will not start, `EPERM: operation not permitted` | The folder is in a macOS-protected location. Move it out of `~/Desktop`, `~/Documents` or `~/Downloads` and update the path in your Claude config |
 | *"Not signed in"* or *"no project open"* | Run `npm run login`, sign in, open a Flow project, leave the window open |
-| A generation fails and the tile says *"unusual activity"* | A soft block on Flow's side, not your prompt. Nothing was charged. Stop generating for a while (tens of minutes) and try again; the tools now refuse to retry through it |
+| A generation fails and the tile says *"unusual activity"* | A soft block on Flow's side, not your prompt. Nothing was charged. Generating is refused for a few hours afterwards (see `flow_status.soft_block`), because retrying feeds it - and volume is what triggers it, so lower `FLOW_MCP_MAX_PER_HOUR` and spread the work out |
 | A clip generated but no file arrived | The media is still in Flow. `flow_download` pulls it back for nothing. Never re-generate and pay twice - and after any failure, check the project's assets and your balance before trusting what a failed job reported |
 | Everything times out | The Chrome window was closed, or the machine slept. Reopen it with `npm run login` |
 

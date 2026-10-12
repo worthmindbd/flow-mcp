@@ -87,8 +87,9 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   Always/Never, image default aspect + x1–x4 + model, video defaults, `Save`). With confirm=Never a multi-scene prompt
   renders all images in parallel; a `Stop` button and status "Thinking…" show while it works, tiles show "NN% <enriched
   prompt>". New tiles end up newest-first, i.e. reverse scene order. runAgentBatch always restores confirm=Always and Agent off.
-- Retry: queue retries once automatically only when the error says Flow reported a failure (timeouts are not retried: they may
-  have spent credits); `flow_retry` / the Studio Retry button re-queue manually. A REAL failed tile has never been observed,
+- Retry: queue retries once automatically only when the error says "Nothing was charged" - the driver's own words for a
+  generation Flow itself refused - and never for a soft block (retrying one just feeds it) or a timeout (it may have spent
+  credits); `flow_retry` / the Studio Retry button re-queue manually. A REAL failed tile has never been observed,
   so the failure detection in waitForNewMedia (FAILURE_TEXT on tile text) and any agent-mode per-scene retry are unverified.
   Capture the DOM of a genuine failed tile before building more on it. Caps: 100 scenes exact, 50 agent.
 - Agent batches (verified 2026-09-20, 5 scenes with scene 2 simulated missing via `FLOW_MCP_SIMULATE_MISSING=2` → all 5
@@ -109,6 +110,14 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   uuid, so the old "uuid in src" extraction silently returned nothing for most tiles (listAssets: 5/42 ids). Use
   TILE_ID_JS: `data-media-id` (images) → uuid in src → the signed src URL itself (video tiles at rest have only a
   thumbnail `img[alt="Generated video thumbnail"]`). mediaTile handles both a uuid and a URL handle. Re-verified: 42/42.
+- Freshness rule, in one place (2026-10-12): `isKnown` / `tileKeys` / `assetKey` in flow.ts decide whether a tile was
+  already in the grid - the same media id, or the same title for a tile that carries no id of its own. It stays
+  deliberately narrow: an edited clip comes back with its SOURCE's title, so a title that hid a tile now carrying a
+  media id would make flow_edit time out after paying. The tiles in view and the "first known tile" error walks are read
+  once and decided in Node, so a page snippet cannot drift from the rule again.
+- `queue.busy` covers the pacing pause as well as a running job (2026-10-12): during the 25-70 s gap a job is merely
+  `queued`, and a grid scan started then collided with the generation about to begin (and `flow_status(detailed)` opened
+  the account panel underneath it).
 - Two flow-mcp processes attached to the same Chrome (e.g. Studio running while a test drives the MCP) break downloads:
   Playwright's per-connection artifact dir is swept while the other process saves → `download.saveAs ... ENOENT`.
   downloadTile now falls back to copying from `download.path()`; still, stop the Studio server before running MCP tests.
@@ -363,6 +372,19 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   the job fails at once with the real words. Response when it appears: stop generating for tens of minutes; it is not
   a prompt problem. It persisted through a 10-minute cooldown (checked once). A fresh project opens with a one-off
   "Got it, dismiss onboarding message" note; dismissOverlays now clears it.
+- THE BLOCK IS NOW REMEMBERED AND ENFORCED (2026-10-12, `src/softblock.ts`): when the reason is seen - by a generation
+  (waitForNewMedia), an edit's own text, or an agent batch's error tiles - `noteSoftBlock` writes
+  HOME/soft-block.json with a `until` (FLOW_MCP_SOFT_BLOCK_HOURS, default 6; 0 disables the wait) and every generating
+  entry point refuses until it expires: the four drivers, `editCharacter`, the queue runner, and `flow_generate` /
+  `flow_edit` / `flow_agent_images` / `flow_continue` before anything is queued (so a blocked account cannot collect
+  one failed job per scene). `flow_status` reports it as `soft_block`, and the panel shows it as a hint. Everything
+  that does not generate - downloads, cutting, narration, assembly - keeps working throughout.
+- VOLUME IS THE TRIGGER (2026-10-12): the block is a risk score on the account, not a timer on clicks. `queue.ts` now
+  takes `FLOW_MCP_MAX_PER_HOUR` (0 = off, 20-30 sensible): the queue WAITS for a free slot and says so in `pacing`.
+  The honest levers are total volume per day, no 50-image parallel bursts, real backoff, a residential IP and a stable
+  profile; there is deliberately NO fingerprint or CDP spoofing (no evasion - see the repo rule), and the 8 ms-per-char
+  typing and JS `scrollTop` scrolling are known weak signals that could be made human if a live session ever shows
+  they matter.
 - Verified on this box: Biscuit (character, free) + 2x10 s 720p 9:16 Omni 1.1 Flash scenes, 15 credits each, files
   exactly 10 s, on-model across takes; flow_assemble concat clean (20.03 s). Hand-rolled ffmpeg concat demuxer on the
   same files produced a bogus 146 s file - use flow_assemble, not a hand concat. Scene 3 needed three prompt variants;

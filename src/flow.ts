@@ -1,10 +1,11 @@
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
 import { HOME_DIR, getFlowPage } from "./chrome.js";
 import type { Job } from "./queue.js";
-import { extractZip } from "./platform.js";
+import { extractZip, moveFile } from "./platform.js";
+import { assertNotGenerating, noteSoftBlock } from "./softblock.js";
 
 export interface FlowState {
   url: string;
@@ -80,12 +81,56 @@ const TILE_ID_JS = `(tile) => {
   return title ? "title:" + title : undefined;
 }`;
 
-export async function mediaIds(page: Page): Promise<string[]> {
+// What the current view of the grid holds. Every decision about a tile (is it new? is it a failure?) is made in
+// Node from this, so there is one rule instead of one per page snippet.
+interface TileInfo {
+  id?: string; // the media id, when the tile has one
+  key: string; // the download handle: the media id, or "title:<name>" for a tile that carries none
+  name: string;
+  kind: "image" | "video" | "other";
+  busy: boolean;
+  error: boolean;
+}
+
+// A tile's identity between two looks at the grid: its media id when it has one, else the title it is known by.
+// This has to stay narrow on purpose. A title must NOT hide a tile that now carries a media id: an edited clip
+// comes back with its SOURCE's title (mapped 2026-09-19), so a title-based rule would count the edit result as
+// "already there" and time out the job after Flow had charged for it. The price of the narrow rule is the reverse
+// case - a known tile that gains an id mid-job can look new - which only matters if it also sorts above the real
+// result, and new tiles always appear at the top.
+export interface TileKey {
+  id?: string;
+  name: string;
+}
+
+export const isKnown = (tile: { id?: string; name: string }, before: TileKey[]): boolean =>
+  before.some((b) => (tile.id ? b.id === tile.id : !b.id && Boolean(tile.name) && b.name === tile.name));
+
+async function tilesInView(page: Page): Promise<TileInfo[]> {
   return page.evaluate(
-    (js) => [...document.querySelectorAll("flow-grid-tile-container")].map(eval(js)).filter(Boolean) as string[],
+    (js) =>
+      [...document.querySelectorAll("flow-grid-tile-container")].map((t) => {
+        const raw = (eval(js) as (t: Element) => string | undefined)(t);
+        return {
+          id: raw && !raw.startsWith("title:") ? raw : undefined,
+          key: raw ?? "",
+          name: t.getAttribute("aria-label") ?? "",
+          kind: (t.querySelector("flow-video-tile") ? "video" : t.querySelector("flow-image-tile") ? "image" : "other") as TileInfo["kind"],
+          busy: /\d+%/.test((t as HTMLElement).innerText),
+          error: Boolean(t.querySelector("flow-error-tile")),
+        };
+      }),
     TILE_ID_JS,
   );
 }
+
+// The tiles on screen right now, as the keys freshness is judged against.
+export async function tileKeys(page: Page): Promise<TileKey[]> {
+  return (await tilesInView(page)).map(({ id, name }) => ({ id, name }));
+}
+
+// Scanned assets carry the same handle in `id`, so a full-grid snapshot can be compared the same way.
+export const assetKey = (a: FlowAsset): TileKey => ({ id: a.id && !a.id.startsWith("title:") ? a.id : undefined, name: a.name });
 
 // The grid is virtualised and the top bar hides once it is scrolled, so every step starts from the top,
 // where new tiles appear.
@@ -112,17 +157,13 @@ const mediaTile = (page: Page, id: string) =>
 
 // A failed generation becomes a <flow-error-tile> ("Failed ... You have not been charged") with Flow's own Retry
 // button. Old failures can sit anywhere in the grid, so only error tiles above the first already-known tile count.
-export async function newErrorTiles(page: Page, known: Iterable<string>): Promise<number> {
-  return page.evaluate(([ids, js]: [string[], string]) => {
-    const seen = new Set(ids);
-    let errors = 0;
-    for (const tile of document.querySelectorAll("flow-grid-tile-container")) {
-      const id = (eval(js) as (t: Element) => string | undefined)(tile);
-      if (id && seen.has(id)) break;
-      if (tile.querySelector("flow-error-tile")) errors++;
-    }
-    return errors;
-  }, [[...known], TILE_ID_JS] as [string[], string]);
+export async function newErrorTiles(page: Page, before: TileKey[]): Promise<number> {
+  let errors = 0;
+  for (const tile of await tilesInView(page)) {
+    if (isKnown(tile, before)) break;
+    if (tile.error) errors++;
+  }
+  return errors;
 }
 
 // Flow's Retry replaces the failed tile with a fresh render of the same prompt and settings, free of charge.
@@ -142,10 +183,9 @@ async function retryErrorTile(page: Page, tile: Locator): Promise<boolean> {
 // Agent-mode failures offer no Retry button; the walk then stops and reports what it counted.
 export async function retryNewErrorTiles(
   page: Page,
-  known: Iterable<string>,
+  before: TileKey[],
   dryRun = false,
 ): Promise<{ errors: number; reachedKnown: boolean; retried: number }> {
-  const ids = [...known];
   let errors = 0;
   let retried = 0;
   let reachedKnown = false;
@@ -154,16 +194,18 @@ export async function retryNewErrorTiles(
     await scrollToTop(page);
     let found = false;
     for (let step = 0; step < 60 && !found && !reachedKnown; step++) {
-      const state = await page.evaluate(([known, js]: [string[], string]) => {
-        const seen = new Set(known);
-        for (const tile of document.querySelectorAll("flow-grid-tile-container")) {
-          const id = (eval(js) as (t: Element) => string | undefined)(tile);
-          const name = tile.getAttribute("aria-label");
-          if ((id && seen.has(id)) || (name && seen.has(name))) return "known";
-          if (tile.querySelector("flow-error-tile")) return "error";
+      // Top of the grid downwards: the first tile that is either already known or a failure ends the step.
+      let state: "known" | "error" | "none" = "none";
+      for (const tile of await tilesInView(page)) {
+        if (isKnown(tile, before)) {
+          state = "known";
+          break;
         }
-        return "none";
-      }, [ids, TILE_ID_JS] as [string[], string]);
+        if (tile.error) {
+          state = "error";
+          break;
+        }
+      }
       if (state === "known") reachedKnown = true;
       else if (state === "error") {
         found = true;
@@ -199,24 +241,15 @@ type MediaKind = "image" | "video";
 //   still processing and only gets its final id a moment later, after the "before" snapshot, so it read as new;
 // - a tile of the wrong kind, such as the still that "Save frame" makes on the way to a continuation clip;
 // - a tile still rendering ("NN%").
-export async function freshMedia(page: Page, before: string[], kind?: MediaKind): Promise<string[]> {
-  const tiles = await page.evaluate(
-    (js) => {
-      const idOf = eval(js) as (t: Element) => string | undefined;
-      return [...document.querySelectorAll("flow-grid-tile-container")].map((t) => ({
-        id: idOf(t),
-        kind: t.querySelector("flow-video-tile") ? "video" : t.querySelector("flow-image-tile") ? "image" : "other",
-        label: t.getAttribute("aria-label") ?? "",
-        busy: /\d+%/.test((t as HTMLElement).innerText),
-      }));
-    },
-    TILE_ID_JS,
+// "Already known" is exactly what isKnown says - the same media id, or the same title when the tile carries no id.
+export async function freshMedia(page: Page, before: TileKey[], kind?: MediaKind): Promise<string[]> {
+  const ours = (await tilesInView(page)).filter(
+    (t) => t.key && !isKnown(t, before) && !t.name.startsWith("fm-") && !t.busy && (!kind || t.kind === kind),
   );
-  const ours = tiles.filter((t) => t.id && !before.includes(t.id) && !t.label.startsWith("fm-") && !t.busy && (!kind || t.kind === kind));
-  return [...new Set(ours.map((t) => t.id!))];
+  return [...new Set(ours.map((t) => t.key))];
 }
 
-async function waitForNewMedia(page: Page, before: string[], count: number, timeoutMs: number, job?: Job, kind?: MediaKind): Promise<string[]> {
+async function waitForNewMedia(page: Page, before: TileKey[], count: number, timeoutMs: number, job?: Job, kind?: MediaKind): Promise<string[]> {
   const deadline = Date.now() + timeoutMs;
   let retriesLeft = job?.params.retries ?? 1;
   let failures = 0;
@@ -236,8 +269,9 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
     // retrying inside it burned ten attempts in a row on 2026-10-12. Fail at once with the real words instead.
     const reason = await errorTileReason(page);
     if (reason && /unusual activity/i.test(reason)) {
+      noteSoftBlock(reason);
       if (fresh.length) return fresh;
-      throw new Error(`Flow refused this generation with "${reason}". Nothing was charged. This is a soft block, not a prompt problem: stop generating for a while (tens of minutes) and try again later.`);
+      throw new Error(`Flow refused this generation with "${reason}". Nothing was charged. This is a soft block, not a prompt problem: no generation will be started again until it expires (see flow_status.soft_block), because retrying only feeds it.`);
     }
     if (retriesLeft > 0) {
       retriesLeft--;
@@ -558,10 +592,10 @@ function unpackTakes(zip: string, targetStem: string): string[] {
   const out: string[] = [];
   for (const [i, path] of takes.entries()) {
     const dest = `${targetStem}${i ? `-v${i + 1}` : ""}${extensionOf(path)}`;
-    renameSync(path, dest);
+    moveFile(path, dest);
     out.push(dest);
   }
-  renameSync(zip, `${targetStem}-takes.zip`);
+  moveFile(zip, `${targetStem}-takes.zip`);
   if (!out.length) throw new Error("Flow sent a ZIP with nothing usable inside it.");
   return out;
 }
@@ -628,7 +662,7 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       if (kind === ".zip") saved = unpackTakes(file, targetStem);
       else {
         const target = `${targetStem}${kind}`;
-        renameSync(file, target);
+        moveFile(file, target);
         saved = [target];
       }
       await page.keyboard.press("Escape");
@@ -660,14 +694,16 @@ async function ensureProjectGrid(page: Page): Promise<void> {
 
 // Drives one generation in the Flow tab and returns the downloaded file paths.
 export async function runGeneration(job: Job): Promise<string[]> {
+  assertNotGenerating();
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
   const s = job.params;
 
   await ensureProjectGrid(page);
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
-  if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
+  // The toggle is confirmed, not clicked and hoped for: a click that silently misses leaves agent mode on, and an
+  // agent run shows no credit quote at all, so max_credits could not stop it.
+  await setAgentMode(page, false);
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
 
@@ -707,7 +743,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const start = page.getByRole("button", { name: "Start generation" });
   if (!(await start.isEnabled())) throw new Error("Flow's Start generation button is disabled; the prompt or inputs were not accepted.");
   await scrollToTop(page);
-  const before = await mediaIds(page);
+  const before = await tileKeys(page);
   await start.click();
 
   const variants = s.variants ?? 1;
@@ -828,7 +864,7 @@ async function savePortrait(page: Page, name: string): Promise<string> {
   if (!pressed) throw new Error("Flow never showed the portrait's Download image button");
   const file = await waitForDownloadedFile(page, before, 90_000);
   const portrait = join(dir, `${name.replace(/[^\w.-]+/g, "_")}${extensionOf(file)}`);
-  renameSync(file, portrait);
+  moveFile(file, portrait);
   return portrait;
 }
 
@@ -836,6 +872,7 @@ async function savePortrait(page: Page, name: string): Promise<string> {
 // Without a change it only saves the character's current portrait: for a look changed by hand in Flow, or an edit whose
 // portrait never reached disk.
 export async function editCharacter(name: string, change?: string, job?: Job): Promise<{ name: string; portrait?: string; note?: string }> {
+  assertNotGenerating();
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
@@ -958,7 +995,7 @@ async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): 
   await page.getByRole("button", { name: "Download scene", exact: true }).click();
   const file = await waitForDownloadedFile(page, before, 600_000);
   const target = `${targetStem}${extensionOf(file)}`;
-  renameSync(file, target);
+  moveFile(file, target);
   await page.getByRole("button", { name: "Back button to go to previous page" }).click().catch(() => {});
   await pause(page, 2000);
   await ensureProjectGrid(page).catch(() => {});
@@ -1102,6 +1139,7 @@ const EDIT_TIMEOUT_MS = 10 * 60_000;
 // Video-to-video edit in Flow's edit view ("make it sunset", "remove the cup"). Flow shows no quote here, so the
 // cost is measured from the balance instead (a 4 s Omni clip cost 20 credits). The result is a new tile.
 export async function runEdit(job: Job): Promise<string[]> {
+  assertNotGenerating();
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
@@ -1112,7 +1150,7 @@ export async function runEdit(job: Job): Promise<string[]> {
   const balance = await readCredits(page).catch(() => undefined);
   // New tiles always appear at the top, so the "before" snapshot is taken there, ahead of the search: scrolling
   // back to the top after the scan would unmount the tile we are about to click (the grid is virtualised).
-  const before = await mediaIds(page);
+  const before = await tileKeys(page);
   const matches = (a: FlowAsset) => a.kind === "video" && a.name.toLowerCase().startsWith(title.toLowerCase());
   const found = (await scanGrid(page, (assets) => assets.some(matches))).find(matches);
   if (!found) throw new Error(`No video whose title starts with "${title}". Use flow_assets to list titles.`);
@@ -1145,6 +1183,13 @@ export async function runEdit(job: Job): Promise<string[]> {
     if (pct) seenProgress = true;
     else if (seenProgress) break;
     const failure = text.split("\n").find((l) => FAILURE_TEXT.test(l) && !l.includes(prompt));
+    // An edit can be refused by the same soft block, and the edit view says so in the same words. Record it here -
+    // otherwise the tool would just time out for ten minutes and the next call would walk into the block again.
+    const refusal = text.split("\n").find((l) => /unusual activity/i.test(l));
+    if (refusal) {
+      noteSoftBlock(refusal);
+      throw new Error(`Flow refused this edit with "${refusal.trim()}". Nothing was charged. This is a soft block, not a prompt problem: no generation will be started again for a while - see flow_status.`);
+    }
     if (!pct && failure && Date.now() > deadline - EDIT_TIMEOUT_MS + 15_000) throw new Error(`Flow reported a failed edit: ${failure.slice(0, 300)}`);
     if (Date.now() > deadline) throw new Error("Timed out waiting for Flow to finish the edit.");
   }
@@ -1268,9 +1313,9 @@ async function agentRound(
   const aspect = s.aspect_ratio ?? "16:9";
   await ensureProjectGrid(page);
   const seenBefore = await scanGrid(page);
-  // Ids are unique per generation; titles are not (the agent reuses wording), so only id-less tiles fall back to a name.
-  const before = new Set<string>(seenBefore.map((a) => a.id).filter((v): v is string => Boolean(v)));
-  const beforeNames = new Set<string>(seenBefore.filter((a) => !a.id).map((a) => a.name));
+  // The whole grid is more than the visible window, so the snapshot comes from the scan. Ids are unique per
+  // generation; a tile without one is known by its title (see isKnown for why that stays narrow).
+  const before = seenBefore.map(assetKey);
   await scrollToTop(page);
 
   const clear = page.getByRole("button", { name: "Clear prompt" });
@@ -1313,7 +1358,14 @@ async function agentRound(
   const failedTiles = await retryNewErrorTiles(page, before, true)
     .then((r) => r.errors)
     .catch(() => 0);
-  const fresh = (await scanGrid(page)).filter((t) => t.id && !before.has(t.id) && !beforeNames.has(t.name) && t.kind === "image");
+  // A refused batch shows the same "unusual activity" note inside its error tiles; remembering it now is what stops
+  // the next round (and the one-by-one recovery) from hammering a blocked account.
+  const refused = await errorTileReason(page).catch(() => undefined);
+  if (refused && /unusual activity/i.test(refused)) {
+    noteSoftBlock(refused);
+    if (!files.length) throw new Error(`Flow refused this batch with "${refused}". Nothing was charged. This is a soft block, not a prompt problem: no generation will be started again for a while - see flow_status.`);
+  }
+  const fresh = (await scanGrid(page)).filter((t) => t.id && !isKnown(assetKey(t), before) && t.kind === "image");
 
   // Tiles finish in any order and the agent rewords prompts, so each image is matched back to its scene by the
   // prompt Flow stored for it ("Reuse prompt" puts that text in the composer).
@@ -1321,8 +1373,8 @@ async function agentRound(
   for (const tile of fresh) {
     await scanGrid(page, (seen) => seen.some((x) => x.id === tile.id));
     const el = mediaTile(page, tile.id!);
-    await el.scrollIntoViewIfNeeded();
-    await el.hover();
+    // Flow only reveals a tile's toolbar for a real pointer move - Playwright's hover() does not open it.
+    await hoverTile(page, el);
     await el.getByRole("button", { name: "Reuse prompt" }).click();
     await pause(page, 900);
     prompts.push(await page.locator(".ProseMirror").first().innerText());
@@ -1337,18 +1389,34 @@ async function agentRound(
   mkdirSync(s.output_dir, { recursive: true });
   const base = Number(s.file_stem.match(/\d+/)?.[0] ?? 1);
   let produced = 0;
+  let downloadErrors = 0;
   for (const [n, tileIndexes] of assigned.entries()) {
     const sceneIndex = indexes[n];
     if (!tileIndexes.length || sceneIndex + 1 === drop) continue;
+    let saved = 0;
     for (const [v, tileIndex] of tileIndexes.entries()) {
       const id = fresh[tileIndex].id!;
-      await scanGrid(page, (seen) => seen.some((x) => x.id === id));
-      const stem = join(s.output_dir, `scene-${String(base + sceneIndex).padStart(2, "0")}${v ? `-v${v + 1}` : ""}`);
-      files.push(...(await downloadTile(page, mediaTile(page, id), stem, s.download_quality ?? "original")));
+      try {
+        await scanGrid(page, (seen) => seen.some((x) => x.id === id));
+        const stem = join(s.output_dir, `scene-${String(base + sceneIndex).padStart(2, "0")}${v ? `-v${v + 1}` : ""}`);
+        files.push(...(await downloadTile(page, mediaTile(page, id), stem, s.download_quality ?? "original")));
+        saved++;
+      } catch {
+        // One stubborn download must not sink the batch: everything already saved stays, and this scene is simply
+        // left out of `done`, so the one-by-one recovery below picks it up. Throwing here was how 16 good images
+        // were once lost (a single failure aborted the run before the recovery could happen).
+        downloadErrors++;
+      }
       await pause(page, 800);
     }
+    if (!saved) continue;
     done.add(sceneIndex);
     produced++;
+  }
+  if (downloadErrors) {
+    job.note = [job.note, `${downloadErrors} image(s) were made in Flow but not downloaded - flow_download fetches them for free`]
+      .filter(Boolean)
+      .join(" · ");
   }
   return { produced, timedOut, failedTiles };
 }
@@ -1360,6 +1428,7 @@ async function agentRound(
 // demonstrated: save the clip's last frame, Animate that image (which switches Flow into agent mode by itself), then
 // add the avatar or character as a second chip. Verified step by step against the live UI on 2026-09-20.
 export async function runContinue(job: Job): Promise<string[]> {
+  assertNotGenerating();
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
@@ -1428,7 +1497,7 @@ export async function runContinue(job: Job): Promise<string[]> {
           `so the look and the person stay consistent through the clip. Open as close to the attached frame as you can.`) +
         ` ${s.prompt}`,
     );
-    const before = await mediaIds(page);
+    const before = await tileKeys(page);
     job.progress = "generating";
     await page.getByRole("button", { name: "Start generation" }).click();
 
@@ -1472,6 +1541,7 @@ export async function runContinue(job: Job): Promise<string[]> {
 }
 
 export async function runAgentBatch(job: Job): Promise<string[]> {
+  assertNotGenerating();
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();

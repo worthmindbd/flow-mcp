@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
 
@@ -24,6 +24,19 @@ export function powershell(script: string, timeout = 120_000): string {
     timeout,
     windowsHide: true,
   });
+}
+
+// Moves a file, even when the two ends are on different filesystems. A plain rename fails there with EXDEV, and
+// the finished download is the one thing a paid generation must never lose - Chrome's download folder and the
+// films folder are separate volumes as soon as one of them lives on an external or network drive.
+export function moveFile(from: string, to: string): void {
+  try {
+    renameSync(from, to);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+    copyFileSync(from, to);
+    rmSync(from, { force: true });
+  }
 }
 
 // Puts a file or folder in the system's own bin so it can be restored: the Mac's Trash, Windows' Recycle Bin, or the

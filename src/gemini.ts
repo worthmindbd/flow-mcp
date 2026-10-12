@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { HOME_DIR } from "./chrome.js";
@@ -90,13 +90,17 @@ export async function speakWithGemini(text: string, voice: string, target: strin
   const rate = Number(part.inlineData.mimeType?.match(/rate=(\d+)/)?.[1] ?? 24000);
   const raw = target.replace(/\.\w+$/, "") + ".pcm";
   writeFileSync(raw, Buffer.from(part.inlineData.data, "base64"));
-  await run(FFMPEG, [
-    "-y", "-f", "s16le", "-ar", String(rate), "-ac", "1", "-i", raw,
-    "-af", "highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target,
-  ]);
+  try {
+    await run(FFMPEG, [
+      "-y", "-f", "s16le", "-ar", String(rate), "-ac", "1", "-i", raw,
+      "-af", "highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target,
+    ]);
+  } finally {
+    // The intermediate is ours and nothing else reads it; leaving it behind put a .pcm in the user's films folder
+    // (and the old `rm -f` cleanup does not exist on Windows).
+    rmSync(raw, { force: true });
+  }
   const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
   const duration = Number(stdout.trim());
-  writeFileSync(raw, "");
-  await run("rm", ["-f", raw]).catch(() => {});
   return { output: target, duration };
 }

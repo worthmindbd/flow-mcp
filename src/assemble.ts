@@ -116,7 +116,15 @@ export async function speakLocally(text: string, voice: string, target: string):
       rmSync(lineFile, { force: true });
     }
   } else {
-    await run(SAY, ["-v", voice, "-r", "168", "-o", raw, text]);
+    // On Linux there is no `say` at all: plain "spawn say ENOENT" told the user nothing. Say what to do instead.
+    await run(SAY, ["-v", voice, "-r", "168", "-o", raw, text]).catch((err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") {
+        throw new Error(
+          `This computer has no speech engine wired in ("${SAY}" was not found). Use the Google AI Studio engine instead: record narrations with engine "gemini".`,
+        );
+      }
+      throw err;
+    });
   }
   await run(FFMPEG, ["-y", "-i", raw, "-af", "highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=5:release=120,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target]);
   rmSync(raw, { force: true });

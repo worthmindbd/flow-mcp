@@ -8,6 +8,7 @@ import { extractLastFrame } from "./chain.js";
 import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
+import { activeSoftBlock, assertNotGenerating } from "./softblock.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
 export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
@@ -262,10 +263,13 @@ export class LocalCore implements Core {
 
   async status({ detailed }: Args<"status">) {
     const flow = await getFlowState(detailed && !this.queue.busy);
-    return { flow, pacing: this.queue.pausedReason, output_root: OUTPUT_ROOT, jobs: this.queue.list().map(jobView) };
+    // A soft block is the one thing that stops all generation, so it is reported even when the queue is quiet.
+    return { flow, pacing: this.queue.pausedReason, soft_block: activeSoftBlock(), output_root: OUTPUT_ROOT, jobs: this.queue.list().map(jobView) };
   }
 
   async generate({ project, scenes }: Args<"generate">) {
+    // Checked before anything is queued: a blocked account would otherwise collect one failed job per scene.
+    assertNotGenerating();
     const invalid = scenes.findIndex((s, i) => s.chain_previous && (i === 0 || s.first_frame || s.type === "image"));
     if (invalid >= 0) {
       throw new Error(`Scene ${invalid + 1}: chain_previous needs a preceding video scene in the same call and cannot be combined with first_frame.`);
@@ -277,8 +281,12 @@ export class LocalCore implements Core {
 
     const output_dir = projectDir(project);
     // Continue numbering after whatever is already on disk or queued, so reruns never overwrite earlier scenes.
+    // Only scene-NN counts: an edit-01 or narration-01 in the same folder must not push the first scene to 02.
     const onDisk = existsSync(output_dir) ? readdirSync(output_dir).map((f) => Number(f.match(/^scene-(\d+)/)?.[1] ?? 0)) : [];
-    const queued = this.queue.list().filter((j) => j.params.output_dir === output_dir).map((j) => Number(j.params.file_stem.match(/\d+/)?.[0] ?? 0));
+    const queued = this.queue
+      .list()
+      .filter((j) => j.params.output_dir === output_dir && /^scene-\d+$/.test(j.params.file_stem))
+      .map((j) => Number(j.params.file_stem.match(/\d+/)![0]));
     const offset = Math.max(0, ...onDisk, ...queued);
     const jobs: Job[] = [];
     for (const [i, { chain_previous, reference_previous, technique, ...scene }] of scenes.entries()) {
@@ -391,6 +399,7 @@ export class LocalCore implements Core {
   }
 
   async agent({ project, scenes, aspect_ratio, download_quality }: Args<"agent">) {
+    assertNotGenerating();
     const output_dir = projectDir(project);
     const job = this.queue.add({
       prompt: `Agent batch: ${scenes.length} images`,
@@ -406,6 +415,7 @@ export class LocalCore implements Core {
   }
 
   async edit({ project, asset, prompt, download_quality }: Args<"edit">) {
+    assertNotGenerating();
     const output_dir = projectDir(project);
     const job = this.queue.add({ prompt, type: "video", max_credits: 0, edit_asset: asset, download_quality, output_dir, file_stem: this.nextStem(output_dir, "edit") });
     return { output_dir, jobs: [jobView(job)] };
@@ -413,6 +423,7 @@ export class LocalCore implements Core {
 
   // Flow's composer takes a start frame OR a character, never both; agent mode takes both, so this goes that way.
   async continue_shot({ project, from_asset, prompt, attach, aspect_ratio, mode, download_quality, force }: Args<"continue_shot">) {
+    assertNotGenerating();
     // A lost queue entry is not proof that nothing ran: when the owner process is replaced mid-job the job vanishes
     // while Flow carries on and charges for it. Re-running then spends twice, which is exactly what happened on
     // 2026-09-20. Flow's own grid is the only honest record, so ask it before starting another paid generation.
@@ -493,7 +504,9 @@ export class LocalCore implements Core {
   async voices() {
     // The panel words itself from these, so a PC never reads "this Mac".
     const place = { computer: COMPUTER, bin: BIN, local_engine: IS_MAC ? "macOS voice" : IS_WIN ? "Windows voice" : "System voice", platform: process.platform };
-    return { gemini: GEMINI_VOICES, gemini_ready: Boolean(geminiKey()), mac: await localVoices(), place };
+    const mac = await localVoices();
+    // mac_ready is what the panel greys the computer-voice engine out with on a system that has none (Linux today).
+    return { gemini: GEMINI_VOICES, gemini_ready: Boolean(geminiKey()), mac, mac_ready: mac.length > 0, place };
   }
 
   async narrate({ project, text, voice, engine, style }: Args<"narrate">) {

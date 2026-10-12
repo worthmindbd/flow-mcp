@@ -425,8 +425,11 @@ function renderSegs() {
   for (const [key, cfg] of Object.entries(SEGS)) {
     const host = $(`[data-seg="${key}"]`); if (!host) continue;
     const omni = S.shots.model.startsWith("Omni");
-    const off = (key === "s_duration" || key === "s_resolution") && !omni;
-    host.innerHTML = cfg.opts.map((o) => `<button type="button" data-v="${o}" class="${String(cfg.get()) === String(o) ? "on" : ""}" ${off ? "disabled" : ""}>${cfg.labels?.[o] ?? o}</button>`).join("");
+    host.innerHTML = cfg.opts.map((o) => {
+      // Length/resolution exist for Omni models only; the computer-voice engine only exists where a voice is installed.
+      const off = ((key === "s_duration" || key === "s_resolution") && !omni) || (key === "n_engine" && o === "mac" && !(VOICES.mac ?? []).length);
+      return `<button type="button" data-v="${o}" class="${String(cfg.get()) === String(o) ? "on" : ""}" ${off ? "disabled" : ""}>${cfg.labels?.[o] ?? o}</button>`;
+    }).join("");
   }
 }
 document.addEventListener("click", (e) => {
@@ -908,7 +911,9 @@ function renderStatus(st) {
   if (f.credits_remaining !== undefined) renderStatus.credits = f.credits_remaining;
   if (f.plan) renderStatus.plan = f.plan;
   $("#status").innerHTML = `<span class="pill"><i class="tally ${cls}"></i>${text}</span>${renderStatus.plan ? `<span class="pill">${esc(renderStatus.plan)}</span>` : ""}${renderStatus.credits !== undefined ? `<span class="pill">${renderStatus.credits.toLocaleString()} credits</span>` : ""}`;
-  $("#hint").innerHTML = f.hint ? `<div class="hint">${esc(f.hint)}</div>` : "";
+  $("#hint").innerHTML = (st.soft_block
+    ? `<div class="hint">Flow is soft-blocked ("unusual activity") — nothing was charged. The tools will not generate again until ${esc(new Date(st.soft_block.until).toLocaleString())}. Downloading, cutting and narration still work.</div>`
+    : "") + (f.hint ? `<div class="hint">${esc(f.hint)}</div>` : "");
   $("#pacing").innerHTML = st.pacing ? `<div class="pacing">⏱ ${esc(st.pacing)}</div>` : "";
   const jobs = [...st.jobs].reverse();
   const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.progress, j.files.length, j.credits, j.attempts]));
@@ -939,6 +944,7 @@ async function poll(detailed = false) {
 function renderAll() {
   for (const [id, val] of [["f_project", S.frames.project], ["s_project", S.shots.project], ["n_project", S.narrate.project], ["c_project", S.cut.project], ["e_project", S.cut.project], ["l_project", S.cut.project]]) if ($("#" + id) && !$("#" + id).value) $("#" + id).value = val;
   $("#s_model").innerHTML = Object.keys(VIDEO_COST).map((m) => `<option ${m === S.shots.model ? "selected" : ""}>${m}</option>`).join("");
+  if (document.activeElement !== $("#s_max")) $("#s_max").value = S.shots.max;
   renderSegs(); renderScenes(); renderCast(); renderNarrate();
   const mus = $('[data-slot="music"]'), vo = $('[data-slot="voiceover"]');
   if (mus) mus.outerHTML = slotHtml("music", 0, S.cut.music, "Music track");
@@ -949,6 +955,15 @@ function renderAll() {
   estimate(); save();
 }
 $("#s_model").addEventListener("change", (e) => { S.shots.model = e.target.value; save(); renderAll(); });
+// The credit ceiling is Flow's own guard read back to you: it must actually reach the job, so the panel keeps the
+// number and the field in step. Emptying the field mid-edit leaves the last real number in place.
+$("#s_max").addEventListener("input", (e) => {
+  if (e.target.value === "") return;
+  S.shots.max = Math.max(0, Math.floor(Number(e.target.value) || 0));
+  save();
+  estimate();
+});
+$("#s_max").addEventListener("change", () => ($("#s_max").value = S.shots.max));
 for (const [id, path] of [["f_project", "frames"], ["s_project", "shots"], ["n_project", "narrate"], ["c_project", "cut"]])
   $("#" + id).addEventListener("input", (e) => { S[path].project = e.target.value; save(); });
 (async () => {
@@ -959,6 +974,8 @@ for (const [id, path] of [["f_project", "frames"], ["s_project", "shots"], ["n_p
   }
   try { [TECH, VOICES] = await Promise.all([api("techniques"), api("voices")]); } catch { VOICES = { gemini: [], mac: [] }; }
   applyPlace(VOICES.place);
+  // No computer voice installed (Linux today): fall back to the Google engine rather than offering one that cannot run.
+  if (S.narrate.engine === "mac" && !(VOICES.mac ?? []).length) { S.narrate.engine = "gemini"; save(); }
   loadCast().then((c) => { CAST = c; renderCast(); }).catch(() => {});
   renderAll(); showTab(S.tab); poll(true); loadGallery();
 })();
